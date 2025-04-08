@@ -7,7 +7,7 @@ const pool = mysql.createPool({
   password: 'root', // 데이터베이스 비밀번호
   database: 'staff_tracker', // 데이터베이스 이름
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 100,
   queueLimit: 0
 });
 

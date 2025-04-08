@@ -8,53 +8,69 @@ const { authenticateToken } = require('../middleware/auth');
 // 출퇴근 기록하기
 router.post('/record', async (req, res) => {
   const { person_name, record_type } = req.body;
-  
-  if (!person_name || !record_type) {
+
+  if (!person_name) {
     return res.status(400).json({ message: '직원 이름과 기록 유형은 필수입니다' });
   }
-  
-  // record_type은 'in' 또는 'out'만 허용
-  if (record_type !== 'in' && record_type !== 'out') {
-    return res.status(400).json({ message: '기록 유형은 in 또는 out이어야 합니다' });
-  }
-  
+  let connection;
+
   try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction(); // 트랜잭션 시작
+
     // 직원이 존재하는지 확인
-    const [personRows] = await pool.query('SELECT * FROM person_info WHERE person_name = ?', [person_name]);
-    
+    const [personRows] = await connection.query('SELECT * FROM person_info WHERE person_name = ?', [person_name]);
+
     if (personRows.length === 0) {
+      await connection.rollback(); // 트랜잭션 롤백
       return res.status(404).json({ message: '해당 이름의 직원을 찾을 수 없습니다' });
     }
-    
+
     const record_id = uuidv4();
-    const record_time = new Date().toISOString();
-    
-    await pool.query(
-      'INSERT INTO attendance_records (record_id, person_name, record_time, record_type) VALUES (?, ?, ?, ?)',
-      [record_id, person_name, record_time, record_type]
+
+    // attendance_records 테이블에 출퇴근 기록 추가
+    await connection.query(
+      'INSERT INTO attendance_records (record_id, person_name, is_present) VALUES (?, ?, ?)',
+      [record_id, person_name, record_type]
     );
-    
-    res.status(201).json({ 
-      message: '출퇴근 기록이 성공적으로 저장되었습니다',
-      record_id,
-      record_time 
-    });
+
+    // current_attendance 테이블 업데이트
+    await connection.query(
+      `INSERT INTO current_attendance (person_name, is_present, last_record_time)
+       VALUES (?, ?, CURRENT_TIMESTAMP)
+       ON DUPLICATE KEY UPDATE 
+         is_present = VALUES(is_present),
+         last_record_time = VALUES(last_record_time)`,
+      [person_name, record_type]
+    );
+
+    await connection.commit(); // 트랜잭션 커밋
+    res.status(201).json({ message: '출퇴근 기록이 성공적으로 저장되었습니다', record_id });
+
   } catch (error) {
     console.error('출퇴근 기록 오류:', error);
+    if (connection) {
+      await connection.rollback(); // 오류 발생 시 트랜잭션 롤백
+    }
     res.status(500).json({ message: '서버 오류가 발생했습니다' });
+
+  } finally {
+    if (connection) {
+      connection.release(); // 커넥션 반환
+    }
   }
 });
 
 // 특정 직원의 출퇴근 기록 조회
 router.get('/:person_name', async (req, res) => {
   const { person_name } = req.params;
-  
+
   try {
     const [rows] = await pool.query(
       'SELECT * FROM attendance_records WHERE person_name = ? ORDER BY record_time',
       [person_name]
     );
-    
+
     res.json(rows);
   } catch (error) {
     console.error('출퇴근 기록 조회 오류:', error);
@@ -65,7 +81,7 @@ router.get('/:person_name', async (req, res) => {
 // 요일별 출퇴근 현황 조회
 router.get('/weekly/:person_name', async (req, res) => {
   const { person_name } = req.params;
-  
+
   try {
     const [rows] = await pool.query(
       `SELECT 
@@ -77,7 +93,7 @@ router.get('/weekly/:person_name', async (req, res) => {
       ORDER BY record_time`,
       [person_name]
     );
-    
+
     // 요일별로 데이터 그룹화
     const weeklyData = {
       1: [], // 일요일
@@ -88,7 +104,7 @@ router.get('/weekly/:person_name', async (req, res) => {
       6: [], // 금요일
       7: []  // 토요일
     };
-    
+
     rows.forEach(record => {
       if (record.day_of_week) {
         weeklyData[record.day_of_week].push({
@@ -97,7 +113,7 @@ router.get('/weekly/:person_name', async (req, res) => {
         });
       }
     });
-    
+
     res.json(weeklyData);
   } catch (error) {
     console.error('요일별 출퇴근 현황 조회 오류:', error);
@@ -109,52 +125,55 @@ router.get('/weekly/:person_name', async (req, res) => {
 router.get('/timeline/:person_name', async (req, res) => {
   const { person_name } = req.params;
   const { date } = req.query; // YYYY-MM-DD 형식으로 받음
-  
+
   if (!date) {
     return res.status(400).json({ message: '날짜 파라미터가 필요합니다 (YYYY-MM-DD 형식)' });
   }
-  
+
   try {
     // 해당 날짜의 출퇴근 기록 조회
     const [rows] = await pool.query(
       `SELECT 
         record_time, 
-        record_type 
+        is_present AS record_type
       FROM attendance_records 
       WHERE 
         person_name = ? AND 
-        DATE(STR_TO_DATE(record_time, '%Y-%m-%dT%H:%i:%s.%fZ')) = ?
+        DATE(record_time) = ?
       ORDER BY record_time`,
       [person_name, date]
     );
-    
+
+    if (rows.length === 0) { // 기록이 없는 경우 처리
+      return res.status(404).json({ message: '해당 날짜에 출퇴근 기록이 없습니다' });
+    }
+
     // 24시간 타임라인 생성 (각 시간별로 사무실 존재 여부 확인)
     const timeline = [];
     let isInOffice = false;
     let inTime = null;
-    
+
     // 모든 기록을 순회하며 출근/퇴근 시간 쌍을 만듦
     for (let i = 0; i < rows.length; i++) {
       const record = rows[i];
       const recordTime = new Date(record.record_time);
-      
-      if (record.record_type === 'in') {
+
+      if (record.record_type === 1) { // is_present가 true (출근)
         isInOffice = true;
         inTime = recordTime;
-      } else if (record.record_type === 'out' && isInOffice) {
-        // 출근 후 퇴근 기록이 있는 경우
+      } else if (record.record_type === 0 && isInOffice) { // is_present가 false (퇴근)
         isInOffice = false;
-        
+
         timeline.push({
           start: inTime.toISOString(),
           end: recordTime.toISOString(),
           duration: (recordTime - inTime) / (1000 * 60) // 분 단위로 계산
         });
-        
+
         inTime = null;
       }
     }
-    
+
     // 마지막 출근 기록이 있고 퇴근 기록이 없는 경우 현재 시간까지 계산
     if (isInOffice && inTime) {
       const now = new Date();
@@ -164,7 +183,7 @@ router.get('/timeline/:person_name', async (req, res) => {
         duration: (now - inTime) / (1000 * 60) // 분 단위로 계산
       });
     }
-    
+
     res.json({
       person_name,
       date,

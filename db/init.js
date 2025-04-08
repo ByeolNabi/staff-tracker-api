@@ -36,7 +36,7 @@ async function initializeDatabase() {
           record_id VARCHAR(255) NOT NULL DEFAULT (UUID()),
           person_name VARCHAR(255) NOT NULL,
           record_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NULL,
-          record_type ENUM('in', 'out') NULL,
+          is_present BOOLEAN DEFAULT FALSE,
           PRIMARY KEY (record_id, person_name),
           FOREIGN KEY (person_name) REFERENCES person_info (person_name)
         )
@@ -48,8 +48,7 @@ async function initializeDatabase() {
         CREATE TABLE IF NOT EXISTS current_attendance (
           person_name VARCHAR(255) NOT NULL,
           is_present BOOLEAN DEFAULT FALSE,
-          last_record_time TIMESTAMP NULL,
-          last_record_type ENUM('in', 'out') NULL,
+          last_record_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
           PRIMARY KEY (person_name),
           FOREIGN KEY (person_name) REFERENCES person_info (person_name)
         )
