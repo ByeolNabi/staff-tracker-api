@@ -61,6 +61,76 @@ router.post('/record', async (req, res) => {
   }
 });
 
+// 요일별 출퇴근 현황 조회
+router.get('/weekly', async (req, res) => {
+  console.log('/weekly')
+  try {
+    // 이번 주의 월요일과 일요일 날짜 계산
+    const today = new Date();
+    const firstDayOfWeek = new Date(today.setDate(today.getDate() - today.getDay() + 1)); // 월요일
+    const lastDayOfWeek = new Date(today.setDate(firstDayOfWeek.getDate() + 6)); // 일요일
+
+    // 날짜를 YYYY-MM-DD 형식으로 변환
+    const formatDate = (date) => date.toISOString().split('T')[0];
+    const startOfWeek = formatDate(firstDayOfWeek);
+    const endOfWeek = formatDate(lastDayOfWeek);
+
+    // 이번 주의 모든 직원 출퇴근 기록 조회
+    const [rows] = await pool.query(
+      `SELECT 
+        person_name,
+        DATE(record_time) AS record_date,
+        is_present
+      FROM attendance_records
+      WHERE DATE(record_time) BETWEEN ? AND ?
+      ORDER BY person_name, record_time`,
+      [startOfWeek, endOfWeek]
+    );
+
+    // 모든 직원의 요일별 출근 여부 초기화
+    const weeklyStatus = {};
+
+    // 요일 매핑
+    const dayMapping = {
+      1: 'Monday',
+      2: 'Tuesday',
+      3: 'Wednesday',
+      4: 'Thursday',
+      5: 'Friday',
+      6: 'Saturday',
+      0: 'Sunday', // JavaScript에서 일요일은 0
+    };
+
+    // 직원별로 데이터를 그룹화
+    rows.forEach((record) => {
+      const recordDate = new Date(record.record_date);
+      const dayOfWeek = dayMapping[recordDate.getDay()]; // 요일 이름 가져오기
+
+      if (!weeklyStatus[record.person_name]) {
+        // 직원 이름으로 초기화
+        weeklyStatus[record.person_name] = {
+          Monday: false,
+          Tuesday: false,
+          Wednesday: false,
+          Thursday: false,
+          Friday: false,
+          Saturday: false,
+          Sunday: false,
+        };
+      }
+
+      if (record.is_present) {
+        weeklyStatus[record.person_name][dayOfWeek] = true; // 출근 기록이 있으면 true로 설정
+      }
+    });
+
+    res.json(weeklyStatus);
+  } catch (error) {
+    console.error('주간 출퇴근 현황 조회 오류:', error);
+    res.status(500).json({ message: '서버 오류가 발생했습니다' });
+  }
+});
+
 // 특정 직원의 출퇴근 기록 조회
 router.get('/:person_name', async (req, res) => {
   const { person_name } = req.params;
@@ -78,119 +148,100 @@ router.get('/:person_name', async (req, res) => {
   }
 });
 
-// 요일별 출퇴근 현황 조회
-router.get('/weekly/:person_name', async (req, res) => {
+router.get('/weekly-timeline/:person_name', async (req, res) => {
   const { person_name } = req.params;
 
   try {
+    // 이번 주의 월요일과 일요일 날짜 계산
+    const today = new Date();
+    const firstDayOfWeek = new Date(today.setDate(today.getDate() - today.getDay() + 1)); // 월요일
+    const lastDayOfWeek = new Date(today.setDate(firstDayOfWeek.getDate() + 6)); // 일요일
+
+    // 날짜를 YYYY-MM-DD 형식으로 변환
+    const formatDate = (date) => date.toISOString().split('T')[0];
+    const startOfWeek = formatDate(firstDayOfWeek);
+    const endOfWeek = formatDate(lastDayOfWeek);
+
+    // 해당 직원의 이번 주 출퇴근 기록 조회
     const [rows] = await pool.query(
       `SELECT 
         record_time, 
-        record_type, 
-        DAYOFWEEK(STR_TO_DATE(record_time, '%Y-%m-%dT%H:%i:%s.%fZ')) as day_of_week
-      FROM attendance_records 
-      WHERE person_name = ? 
-      ORDER BY record_time`,
-      [person_name]
-    );
-
-    // 요일별로 데이터 그룹화
-    const weeklyData = {
-      1: [], // 일요일
-      2: [], // 월요일
-      3: [], // 화요일
-      4: [], // 수요일
-      5: [], // 목요일
-      6: [], // 금요일
-      7: []  // 토요일
-    };
-
-    rows.forEach(record => {
-      if (record.day_of_week) {
-        weeklyData[record.day_of_week].push({
-          record_time: record.record_time,
-          record_type: record.record_type
-        });
-      }
-    });
-
-    res.json(weeklyData);
-  } catch (error) {
-    console.error('요일별 출퇴근 현황 조회 오류:', error);
-    res.status(500).json({ message: '서버 오류가 발생했습니다' });
-  }
-});
-
-// 24시간 근무 현황 그래프 데이터 (특정 날짜 기준)
-router.get('/timeline/:person_name', async (req, res) => {
-  const { person_name } = req.params;
-  const { date } = req.query; // YYYY-MM-DD 형식으로 받음
-
-  if (!date) {
-    return res.status(400).json({ message: '날짜 파라미터가 필요합니다 (YYYY-MM-DD 형식)' });
-  }
-
-  try {
-    // 해당 날짜의 출퇴근 기록 조회
-    const [rows] = await pool.query(
-      `SELECT 
-        record_time, 
-        is_present AS record_type
+        is_present 
       FROM attendance_records 
       WHERE 
         person_name = ? AND 
-        DATE(record_time) = ?
+        DATE(record_time) BETWEEN ? AND ?
       ORDER BY record_time`,
-      [person_name, date]
+      [person_name, startOfWeek, endOfWeek]
     );
 
-    if (rows.length === 0) { // 기록이 없는 경우 처리
-      return res.status(404).json({ message: '해당 날짜에 출퇴근 기록이 없습니다' });
-    }
+    // 요일별 시간 초기화
+    const weeklyTimeline = {
+      Monday: [],
+      Tuesday: [],
+      Wednesday: [],
+      Thursday: [],
+      Friday: [],
+      Saturday: [],
+      Sunday: [],
+    };
 
-    // 24시간 타임라인 생성 (각 시간별로 사무실 존재 여부 확인)
-    const timeline = [];
+    // 요일 매핑
+    const dayMapping = {
+      1: 'Monday',
+      2: 'Tuesday',
+      3: 'Wednesday',
+      4: 'Thursday',
+      5: 'Friday',
+      6: 'Saturday',
+      0: 'Sunday', // JavaScript에서 일요일은 0
+    };
+
+    // 출퇴근 기록을 순회하며 요일별 시간 계산
     let isInOffice = false;
     let inTime = null;
 
-    // 모든 기록을 순회하며 출근/퇴근 시간 쌍을 만듦
-    for (let i = 0; i < rows.length; i++) {
-      const record = rows[i];
+    rows.forEach((record) => {
       const recordTime = new Date(record.record_time);
+      const dayOfWeek = dayMapping[recordTime.getDay()];
 
-      if (record.record_type === 1) { // is_present가 true (출근)
+      if (record.is_present) {
+        // 출근 기록
         isInOffice = true;
         inTime = recordTime;
-      } else if (record.record_type === 0 && isInOffice) { // is_present가 false (퇴근)
+      } else if (!record.is_present && isInOffice) {
+        // 퇴근 기록
         isInOffice = false;
+        const outTime = recordTime;
 
-        timeline.push({
+        // 해당 요일에 머문 시간 추가
+        weeklyTimeline[dayOfWeek].push({
           start: inTime.toISOString(),
-          end: recordTime.toISOString(),
-          duration: (recordTime - inTime) / (1000 * 60) // 분 단위로 계산
+          end: outTime.toISOString(),
+          duration: (outTime - inTime) / (1000 * 60), // 분 단위로 계산
         });
 
         inTime = null;
       }
-    }
+    });
 
     // 마지막 출근 기록이 있고 퇴근 기록이 없는 경우 현재 시간까지 계산
     if (isInOffice && inTime) {
       const now = new Date();
-      timeline.push({
+      const dayOfWeek = dayMapping[now.getDay()];
+      weeklyTimeline[dayOfWeek].push({
         start: inTime.toISOString(),
         end: now.toISOString(),
-        duration: (now - inTime) / (1000 * 60) // 분 단위로 계산
+        duration: (now - inTime) / (1000 * 60), // 분 단위로 계산
       });
     }
 
     res.json({
       person_name,
-      date,
-      timeline
+      weeklyTimeline,
     });
   } catch (error) {
-    console.error('근무 현황 타임라인 조회 오류:', error);
+    console.error('주간 타임라인 조회 오류:', error);
     res.status(500).json({ message: '서버 오류가 발생했습니다' });
   }
 });
