@@ -39,7 +39,7 @@ const requestLogger = (req, res, next) => {
 // 모든 요청에 requestLogger 미들웨어 적용
 
 app.use(cors({
-  origin: 'http://192.168.0.22:5173', // 프론트엔드 도메인
+  origin: ['http://192.168.0.22:5173','http://localhost:5173'], // 프론트엔드 도메인
   methods: ['GET', 'POST', 'PUT', 'DELETE'],
   credentials: true, // 쿠키를 포함한 요청 허용
 }));

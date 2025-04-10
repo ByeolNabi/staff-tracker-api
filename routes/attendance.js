@@ -5,7 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const { pool } = require('../db/connection');
 const { authenticateToken } = require('../middleware/auth');
 
-// 출퇴근 기록하기
+// 출퇴근 상세 기록표
 router.post('/record', async (req, res) => {
   const { person_name, record_type } = req.body;
 
@@ -61,17 +61,18 @@ router.post('/record', async (req, res) => {
   }
 });
 
-// 요일별 출퇴근 현황 조회
+// 요일별 출퇴근 o/x 조회
 router.get('/weekly', async (req, res) => {
-  console.log('/weekly')
+  console.log('/weekly');
   try {
-    // 이번 주의 월요일과 일요일 날짜 계산
+    // 이번 주의 월요일과 일요일 날짜 계산 (KST 기준)
     const today = new Date();
+    const kstOffset = 9 * 60 * 60 * 1000; // UTC+9 (한국 표준시)
     const firstDayOfWeek = new Date(today.setDate(today.getDate() - today.getDay() + 1)); // 월요일
     const lastDayOfWeek = new Date(today.setDate(firstDayOfWeek.getDate() + 6)); // 일요일
 
     // 날짜를 YYYY-MM-DD 형식으로 변환
-    const formatDate = (date) => date.toISOString().split('T')[0];
+    const formatDate = (date) => new Date(date.getTime() + kstOffset).toISOString().split('T')[0];
     const startOfWeek = formatDate(firstDayOfWeek);
     const endOfWeek = formatDate(lastDayOfWeek);
 
@@ -79,10 +80,10 @@ router.get('/weekly', async (req, res) => {
     const [rows] = await pool.query(
       `SELECT 
         person_name,
-        DATE(record_time) AS record_date,
+        DATE(CONVERT_TZ(record_time, '+00:00', '+09:00')) AS record_date,
         is_present
       FROM attendance_records
-      WHERE DATE(record_time) BETWEEN ? AND ?
+      WHERE DATE(CONVERT_TZ(record_time, '+00:00', '+09:00')) BETWEEN ? AND ?
       ORDER BY person_name, record_time`,
       [startOfWeek, endOfWeek]
     );
@@ -136,41 +137,26 @@ router.get('/:person_name', async (req, res) => {
   const { person_name } = req.params;
 
   try {
-    const [rows] = await pool.query(
-      'SELECT * FROM attendance_records WHERE person_name = ? ORDER BY record_time',
-      [person_name]
-    );
-
-    res.json(rows);
-  } catch (error) {
-    console.error('출퇴근 기록 조회 오류:', error);
-    res.status(500).json({ message: '서버 오류가 발생했습니다' });
-  }
-});
-
-router.get('/weekly-timeline/:person_name', async (req, res) => {
-  const { person_name } = req.params;
-
-  try {
-    // 이번 주의 월요일과 일요일 날짜 계산
+    // 이번 주의 월요일과 일요일 날짜 계산 (KST 기준)
     const today = new Date();
+    const kstOffset = 9 * 60 * 60 * 1000; // UTC+9 (한국 표준시)
     const firstDayOfWeek = new Date(today.setDate(today.getDate() - today.getDay() + 1)); // 월요일
     const lastDayOfWeek = new Date(today.setDate(firstDayOfWeek.getDate() + 6)); // 일요일
 
     // 날짜를 YYYY-MM-DD 형식으로 변환
-    const formatDate = (date) => date.toISOString().split('T')[0];
+    const formatDate = (date) => new Date(date.getTime() + kstOffset).toISOString().split('T')[0];
     const startOfWeek = formatDate(firstDayOfWeek);
     const endOfWeek = formatDate(lastDayOfWeek);
 
     // 해당 직원의 이번 주 출퇴근 기록 조회
     const [rows] = await pool.query(
       `SELECT 
-        record_time, 
+        CONVERT_TZ(record_time, '+00:00', '+09:00') AS record_time, 
         is_present 
       FROM attendance_records 
       WHERE 
         person_name = ? AND 
-        DATE(record_time) BETWEEN ? AND ?
+        DATE(CONVERT_TZ(record_time, '+00:00', '+09:00')) BETWEEN ? AND ?
       ORDER BY record_time`,
       [person_name, startOfWeek, endOfWeek]
     );
@@ -197,12 +183,12 @@ router.get('/weekly-timeline/:person_name', async (req, res) => {
       0: 'Sunday', // JavaScript에서 일요일은 0
     };
 
-    // 출퇴근 기록을 순회하며 요일별 시간 계산
+    // 출퇴근 기록을 순회하며 요일별 시간 계산 (KST 기준)
     let isInOffice = false;
     let inTime = null;
 
     rows.forEach((record) => {
-      const recordTime = new Date(record.record_time);
+      const recordTime = new Date(record.record_time); // 이미 KST로 변환된 시간
       const dayOfWeek = dayMapping[recordTime.getDay()];
 
       if (record.is_present) {
@@ -227,7 +213,7 @@ router.get('/weekly-timeline/:person_name', async (req, res) => {
 
     // 마지막 출근 기록이 있고 퇴근 기록이 없는 경우 현재 시간까지 계산
     if (isInOffice && inTime) {
-      const now = new Date();
+      const now = new Date(); // 현재 시간 (KST 기준)
       const dayOfWeek = dayMapping[now.getDay()];
       weeklyTimeline[dayOfWeek].push({
         start: inTime.toISOString(),
