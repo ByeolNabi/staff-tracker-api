@@ -139,24 +139,23 @@ router.get('/:person_name', async (req, res) => {
   try {
     // 이번 주의 월요일과 일요일 날짜 계산 (KST 기준)
     const today = new Date();
-    const kstOffset = 9 * 60 * 60 * 1000; // UTC+9 (한국 표준시)
     const firstDayOfWeek = new Date(today.setDate(today.getDate() - today.getDay() + 1)); // 월요일
     const lastDayOfWeek = new Date(today.setDate(firstDayOfWeek.getDate() + 6)); // 일요일
 
     // 날짜를 YYYY-MM-DD 형식으로 변환
-    const formatDate = (date) => new Date(date.getTime() + kstOffset).toISOString().split('T')[0];
+    const formatDate = (date) => date.toISOString().split('T')[0];
     const startOfWeek = formatDate(firstDayOfWeek);
     const endOfWeek = formatDate(lastDayOfWeek);
 
     // 해당 직원의 이번 주 출퇴근 기록 조회
     const [rows] = await pool.query(
       `SELECT 
-        CONVERT_TZ(record_time, '+00:00', '+09:00') AS record_time, 
+        record_time, 
         is_present 
       FROM attendance_records 
       WHERE 
         person_name = ? AND 
-        DATE(CONVERT_TZ(record_time, '+00:00', '+09:00')) BETWEEN ? AND ?
+        DATE(record_time) BETWEEN ? AND ?
       ORDER BY record_time`,
       [person_name, startOfWeek, endOfWeek]
     );
