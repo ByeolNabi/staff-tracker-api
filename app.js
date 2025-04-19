@@ -2,6 +2,7 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
+const path = require('path'); // path 모듈 추가
 const jwt = require('jsonwebtoken');
 const mysql = require('mysql2/promise');
 const bcrypt = require('bcrypt');
@@ -48,10 +49,21 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(requestLogger);
 
-// 라우트 설정
+// API 라우트 설정
 app.use('/api/auth', authRoutes);
 app.use('/api/person', personRoutes);
 app.use('/api/attendance', attendanceRoutes);
+
+// 정적 파일 제공 설정 (Vite+React 빌드 결과물)
+app.use(express.static(path.join(__dirname, 'dist')));
+
+// API가 아닌 모든 요청은 index.html로 리다이렉트 (SPA 클라이언트 라우팅 지원)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    return next();
+  }
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+});
 
 // 서버 시작
 app.listen(PORT, () => {
