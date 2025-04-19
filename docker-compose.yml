@@ -1,0 +1,37 @@
+version: '3.8'
+services:
+  db:
+    image: mysql:latest
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: staff_tracker
+    ports:
+      - "3307:3306" # 필요시
+    networks:
+      - my-network
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-p", "root" ]
+      timeout: 20s
+      retries: 10
+  app:
+    build: .
+    ports:
+      - "3306:3000"
+    environment:
+      DB_HOST: db # Docker Compose 서비스 이름으로 접근
+      DB_USER: root
+      DB_PASSWORD: root
+      DB_DATABASE: staff_tracker
+      DB_PORT: 3306 # MySQL 기본 포트
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - my-network
+
+networks:
+  my-network:
+    driver: bridge
+
+# docker-compose up -d
+# docker-compose build app
