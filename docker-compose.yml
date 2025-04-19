@@ -10,7 +10,7 @@ services:
     networks:
       - my-network
     healthcheck:
-      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-p", "root" ]
+      test: [ "CMD", "mysqladmin", "ping", "-h", "localhost", "-proot" ]
       timeout: 20s
       retries: 10
   app:
