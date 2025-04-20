@@ -63,28 +63,28 @@ router.post('/record', async (req, res) => {
 
 // 요일별 출퇴근 o/x 조회
 router.get('/weekly', async (req, res) => {
-  console.log('/weekly');
   try {
-    // 이번 주의 월요일과 일요일 날짜 계산 (KST 기준)
+    // 이번 주의 월요일과 일요일 날짜 계산
     const today = new Date();
-    const kstOffset = 9 * 60 * 60 * 1000; // UTC+9 (한국 표준시)
-    const firstDayOfWeek = new Date(today.setDate(today.getDate() - today.getDay() + 1)); // 월요일
+    const firstDayOfWeek = new Date(today.setDate(today.getDate() - (today.getDay() || 7) + 1)); // 월요일
     const lastDayOfWeek = new Date(today.setDate(firstDayOfWeek.getDate() + 6)); // 일요일
 
     // 날짜를 YYYY-MM-DD 형식으로 변환
-    const formatDate = (date) => new Date(date.getTime() + kstOffset).toISOString().split('T')[0];
+    const formatDate = (date) => date.toISOString().split('T')[0];
     const startOfWeek = formatDate(firstDayOfWeek);
     const endOfWeek = formatDate(lastDayOfWeek);
 
-    // 이번 주의 모든 직원 출퇴근 기록 조회
+    // 모든 직원과 이번 주 출근 기록 LEFT JOIN
     const [rows] = await pool.query(
       `SELECT 
-        person_name,
-        DATE(CONVERT_TZ(record_time, '+00:00', '+09:00')) AS record_date,
-        is_present
-      FROM attendance_records
-      WHERE DATE(CONVERT_TZ(record_time, '+00:00', '+09:00')) BETWEEN ? AND ?
-      ORDER BY person_name, record_time`,
+        p.person_name,
+        DATE(a.record_time) AS record_date,
+        a.is_present
+      FROM person_info p
+      LEFT JOIN attendance_records a
+        ON p.person_name = a.person_name
+        AND DATE(a.record_time) BETWEEN ? AND ?
+      ORDER BY p.person_name, a.record_time`,
       [startOfWeek, endOfWeek]
     );
 
@@ -104,9 +104,6 @@ router.get('/weekly', async (req, res) => {
 
     // 직원별로 데이터를 그룹화
     rows.forEach((record) => {
-      const recordDate = new Date(record.record_date);
-      const dayOfWeek = dayMapping[recordDate.getDay()]; // 요일 이름 가져오기
-
       if (!weeklyStatus[record.person_name]) {
         // 직원 이름으로 초기화
         weeklyStatus[record.person_name] = {
@@ -121,6 +118,8 @@ router.get('/weekly', async (req, res) => {
       }
 
       if (record.is_present) {
+        const recordDate = new Date(record.record_date);
+        const dayOfWeek = dayMapping[recordDate.getDay()]; // 요일 이름 가져오기
         weeklyStatus[record.person_name][dayOfWeek] = true; // 출근 기록이 있으면 true로 설정
       }
     });
@@ -139,7 +138,7 @@ router.get('/:person_name', async (req, res) => {
   try {
     // 이번 주의 월요일과 일요일 날짜 계산 (KST 기준)
     const today = new Date();
-    const firstDayOfWeek = new Date(today.setDate(today.getDate() - today.getDay() + 1)); // 월요일
+    const firstDayOfWeek = new Date(today.setDate(today.getDate() - (today.getDay() || 7) + 1)); // 월요일
     const lastDayOfWeek = new Date(today.setDate(firstDayOfWeek.getDate() + 6)); // 일요일
 
     // 날짜를 YYYY-MM-DD 형식으로 변환
